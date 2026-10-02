@@ -496,6 +496,14 @@ select {
   min-height: 44px;
 }
 
+.inbox-reminders {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .quick-grid button {
   border: 1px solid var(--stroke);
   background: #fff;

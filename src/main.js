@@ -1,6 +1,7 @@
 import './styles.css';
 
 const storageKey = 'plannerDashboardDataV1';
+const reminderLogKey = 'plannerReminderLogV1';
 
 const idGenerator =
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -27,7 +28,11 @@ const demoData = {
       startTime: '09:30',
       endTime: '10:45',
       notes: 'Bring lab notebook',
-      accountId: ''
+      accountId: '',
+      recurrenceType: 'weekly',
+      recurrenceEnd: isoDateOffset(120),
+      reminderType: 'at-time',
+      reminderMinutesBefore: 15
     },
     {
       id: idGenerator(),
@@ -37,7 +42,11 @@ const demoData = {
       startTime: '13:00',
       endTime: '18:00',
       notes: 'Close register',
-      accountId: ''
+      accountId: '',
+      recurrenceType: 'weekly',
+      recurrenceEnd: isoDateOffset(120),
+      reminderType: 'at-time',
+      reminderMinutesBefore: 30
     },
     {
       id: idGenerator(),
@@ -47,7 +56,11 @@ const demoData = {
       startTime: '23:59',
       endTime: '',
       notes: 'Submit on portal',
-      accountId: ''
+      accountId: '',
+      recurrenceType: 'none',
+      recurrenceEnd: '',
+      reminderType: 'morning',
+      reminderMinutesBefore: 15
     }
   ],
   trackers: [
@@ -97,13 +110,15 @@ const state = {
   selectedDate: todayISO(),
   activeTab: 'today',
   modal: null,
-  data: loadData()
+  data: loadData(),
+  reminderLog: loadReminderLog()
 };
 
 const app = document.querySelector('#app');
 
 render();
 registerServiceWorker();
+startReminderEngine();
 
 function render() {
   app.innerHTML = `
@@ -193,10 +208,15 @@ function renderCalendarTab() {
 }
 
 function renderInbox() {
-  const upcoming = state.data.events
-    .filter((event) => event.date >= todayISO())
-    .sort(sortByDateTime)
-    .slice(0, 5);
+  const upcoming = getOccurrencesInRange(todayISO(), isoDateOffset(21), 5);
+  const reminderStatus =
+    typeof Notification === 'undefined'
+      ? 'Notifications unavailable on this browser'
+      : Notification.permission === 'granted'
+        ? 'Reminders are enabled'
+        : Notification.permission === 'denied'
+          ? 'Reminders blocked in browser settings'
+          : 'Enable reminders for smarter alerts';
 
   return `
     <div class="stack">
@@ -210,6 +230,10 @@ function renderInbox() {
           <button class="pill" type="submit">Add</button>
         </form>
         <p class="muted">Try: "Yoga tomorrow 7am" or "Dentist Oct 15 3pm"</p>
+        <div class="inbox-reminders">
+          <p class="muted">${reminderStatus}</p>
+          <button class="ghost" data-action="request-notifications">Enable Alerts</button>
+        </div>
       </div>
       <div class="card soft">
         <div class="section-head">
@@ -243,10 +267,7 @@ function renderTrackers() {
 
 function renderMoney() {
   const { accounts } = state.data;
-  const moneyEvents = state.data.events
-    .filter((event) => event.category === 'money')
-    .sort(sortByDateTime)
-    .slice(0, 6);
+  const moneyEvents = getOccurrencesInRange(todayISO(), isoDateOffset(30), 6, (event) => event.category === 'money');
 
   return `
     <div class="stack">
@@ -333,13 +354,19 @@ function renderEventRows(events, showActions) {
   return events
     .map((event) => {
       const category = categoryConfig[event.category] ?? categoryConfig.plan;
+      const recurrenceText = recurrenceLabel(event.recurrenceType);
+      const reminderText = reminderLabel(event);
+      const metaParts = [formatTimeRange(event.startTime, event.endTime)];
+      if (recurrenceText) metaParts.push(recurrenceText);
+      if (reminderText) metaParts.push(reminderText);
+      if (event.notes) metaParts.push(escapeHtml(event.notes));
       return `
         <article class="event-row">
           <div class="event-dot" style="background:${category.color}"></div>
           <div class="event-main">
             <p class="badge">${category.icon} ${category.label}</p>
             <h4>${escapeHtml(event.title)}</h4>
-            <p class="muted">${formatTimeRange(event.startTime, event.endTime)} ${event.notes ? `• ${escapeHtml(event.notes)}` : ''}</p>
+            <p class="muted">${metaParts.join(' • ')}</p>
           </div>
           ${
             showActions
@@ -455,7 +482,11 @@ function renderModal() {
       startTime: '',
       endTime: '',
       notes: '',
-      accountId: ''
+      accountId: '',
+      recurrenceType: 'none',
+      recurrenceEnd: '',
+      reminderType: 'none',
+      reminderMinutesBefore: 15
     };
 
     return `
@@ -476,6 +507,33 @@ function renderModal() {
             <label>End<input type="time" name="endTime" value="${event.endTime || ''}" /></label>
           </div>
           <label>Notes<input name="notes" value="${escapeHtml(event.notes || '')}" /></label>
+          <label>Repeat
+            <select name="recurrenceType">
+              <option value="none" ${event.recurrenceType === 'none' ? 'selected' : ''}>Does not repeat</option>
+              <option value="daily" ${event.recurrenceType === 'daily' ? 'selected' : ''}>Daily</option>
+              <option value="weekly" ${event.recurrenceType === 'weekly' ? 'selected' : ''}>Weekly</option>
+              <option value="monthly" ${event.recurrenceType === 'monthly' ? 'selected' : ''}>Monthly</option>
+            </select>
+          </label>
+          <label>Repeat until (optional)
+            <input type="date" name="recurrenceEnd" value="${event.recurrenceEnd || ''}" />
+          </label>
+          <label>Reminder
+            <select name="reminderType">
+              <option value="none" ${event.reminderType === 'none' ? 'selected' : ''}>No reminder</option>
+              <option value="at-time" ${event.reminderType === 'at-time' ? 'selected' : ''}>Before start time</option>
+              <option value="morning" ${event.reminderType === 'morning' ? 'selected' : ''}>Morning reminder (8:00 AM)</option>
+            </select>
+          </label>
+          <label>Minutes before (for timed reminders)
+            <select name="reminderMinutesBefore">
+              <option value="5" ${Number(event.reminderMinutesBefore) === 5 ? 'selected' : ''}>5 min</option>
+              <option value="10" ${Number(event.reminderMinutesBefore) === 10 ? 'selected' : ''}>10 min</option>
+              <option value="15" ${Number(event.reminderMinutesBefore) === 15 ? 'selected' : ''}>15 min</option>
+              <option value="30" ${Number(event.reminderMinutesBefore) === 30 ? 'selected' : ''}>30 min</option>
+              <option value="60" ${Number(event.reminderMinutesBefore) === 60 ? 'selected' : ''}>60 min</option>
+            </select>
+          </label>
           <label>Account (for money items)
             <select name="accountId">
               <option value="">None</option>
@@ -635,6 +693,11 @@ function handleAction(action, element) {
     return;
   }
 
+  if (action === 'request-notifications') {
+    requestNotificationPermission();
+    return;
+  }
+
   if (action === 'edit-event') {
     const eventToEdit = state.data.events.find((item) => item.id === element.dataset.id);
     if (!eventToEdit) return;
@@ -710,7 +773,11 @@ function saveEvent(values) {
     startTime: values.startTime,
     endTime: values.endTime,
     notes: String(values.notes || '').trim(),
-    accountId: values.accountId
+    accountId: values.accountId,
+    recurrenceType: sanitizeRecurrenceType(values.recurrenceType),
+    recurrenceEnd: values.recurrenceEnd || '',
+    reminderType: sanitizeReminderType(values.reminderType),
+    reminderMinutesBefore: clampReminderMinutes(values.reminderMinutesBefore)
   };
 
   if (!payload.title || !payload.date) return;
@@ -737,7 +804,11 @@ function saveQuickCapture(values) {
     startTime: parsed.startTime,
     endTime: parsed.endTime,
     notes: parsed.notes,
-    accountId: ''
+    accountId: '',
+    recurrenceType: parsed.recurrenceType,
+    recurrenceEnd: parsed.recurrenceEnd,
+    reminderType: parsed.reminderType,
+    reminderMinutesBefore: parsed.reminderMinutesBefore
   };
 
   state.data.events.push(payload);
@@ -789,7 +860,10 @@ function saveAccount(values) {
 }
 
 function eventsForDate(date) {
-  return state.data.events.filter((item) => item.date === date).sort(sortByDateTime);
+  return state.data.events
+    .filter((item) => occursOnDate(item, date))
+    .map((item) => materializeEventOnDate(item, date))
+    .sort(sortByDateTime);
 }
 
 function countEventsForDate(date) {
@@ -810,7 +884,7 @@ function loadData() {
   try {
     const parsed = JSON.parse(raw);
     return {
-      events: Array.isArray(parsed.events) ? parsed.events : [],
+      events: Array.isArray(parsed.events) ? parsed.events.map((event) => normalizeEvent(event)) : [],
       trackers: Array.isArray(parsed.trackers) ? parsed.trackers : [],
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : []
     };
@@ -820,7 +894,28 @@ function loadData() {
 }
 
 function cloneData(data) {
-  return JSON.parse(JSON.stringify(data));
+  const cloned = JSON.parse(JSON.stringify(data));
+  return {
+    ...cloned,
+    events: Array.isArray(cloned.events) ? cloned.events.map((event) => normalizeEvent(event)) : []
+  };
+}
+
+function normalizeEvent(event) {
+  return {
+    id: event.id || idGenerator(),
+    title: String(event.title || '').trim(),
+    category: event.category || 'plan',
+    date: event.date || todayISO(),
+    startTime: event.startTime || '',
+    endTime: event.endTime || '',
+    notes: event.notes || '',
+    accountId: event.accountId || '',
+    recurrenceType: sanitizeRecurrenceType(event.recurrenceType),
+    recurrenceEnd: event.recurrenceEnd || '',
+    reminderType: sanitizeReminderType(event.reminderType),
+    reminderMinutesBefore: clampReminderMinutes(event.reminderMinutesBefore)
+  };
 }
 
 function todayISO() {
@@ -853,6 +948,21 @@ function formatTimeRange(startTime, endTime) {
   if (startTime && !endTime) return formatTime(startTime);
   if (!startTime && endTime) return `Until ${formatTime(endTime)}`;
   return `${formatTime(startTime)} - ${formatTime(endTime)}`;
+}
+
+function recurrenceLabel(recurrenceType) {
+  if (recurrenceType === 'daily') return 'Repeats daily';
+  if (recurrenceType === 'weekly') return 'Repeats weekly';
+  if (recurrenceType === 'monthly') return 'Repeats monthly';
+  return '';
+}
+
+function reminderLabel(event) {
+  if (event.reminderType === 'at-time' && event.startTime) {
+    return `Alert ${event.reminderMinutesBefore}m before`;
+  }
+  if (event.reminderType === 'morning') return 'Morning reminder';
+  return '';
 }
 
 function formatTime(time) {
@@ -906,6 +1016,8 @@ function parseNaturalEventInput(input) {
   const { startTime, endTime } = parseTimeRangeFromText(lowered);
   const category = inferCategoryFromText(lowered);
   const title = toTitleCase(cleanTitleFromInput(input));
+  const recurrenceType = parseRecurrenceFromText(lowered);
+  const reminderType = parseReminderFromText(lowered, startTime);
 
   return {
     title: title || 'New item',
@@ -913,8 +1025,26 @@ function parseNaturalEventInput(input) {
     date,
     startTime,
     endTime,
-    notes: `Added from quick capture: ${input}`
+    notes: `Added from quick capture: ${input}`,
+    recurrenceType,
+    recurrenceEnd: recurrenceType === 'none' ? '' : isoDateOffset(90),
+    reminderType,
+    reminderMinutesBefore: 15
   };
+}
+
+function parseRecurrenceFromText(text) {
+  if (/\b(daily|every day|everyday)\b/.test(text)) return 'daily';
+  if (/\b(weekly|every week)\b/.test(text)) return 'weekly';
+  if (/\b(monthly|every month)\b/.test(text)) return 'monthly';
+  return 'none';
+}
+
+function parseReminderFromText(text, startTime) {
+  if (/\b(no reminder|silent)\b/.test(text)) return 'none';
+  if (/\b(morning reminder|morning)\b/.test(text)) return 'morning';
+  if (/\b(remind|alert|notify)\b/.test(text)) return startTime ? 'at-time' : 'morning';
+  return 'none';
 }
 
 function parseDateFromText(text) {
@@ -994,6 +1124,7 @@ function cleanTitleFromInput(input) {
   return input
     .replace(/\b(today|tomorrow|sun(day)?|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?)\b/gi, ' ')
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)?\s*[-to]*\s*\d{0,2}(:\d{2})?\s*(am|pm)?\b/gi, ' ')
+    .replace(/\b(every day|everyday|daily|weekly|monthly|every week|every month|remind me|alert me|notify me)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -1033,9 +1164,7 @@ function findNextEvent(date) {
 
 function findDueSoonEvent() {
   const limit = isoDateOffset(7);
-  return state.data.events
-    .filter((event) => (event.category === 'deadline_school' || event.category === 'deadline_work') && event.date >= todayISO() && event.date <= limit)
-    .sort(sortByDateTime)[0];
+  return getOccurrencesInRange(todayISO(), limit, 20, (event) => event.category === 'deadline_school' || event.category === 'deadline_work')[0];
 }
 
 function daysUntil(isoDate) {
@@ -1055,4 +1184,163 @@ function registerServiceWorker() {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js');
   });
+}
+
+function sanitizeRecurrenceType(value) {
+  const allowed = ['none', 'daily', 'weekly', 'monthly'];
+  return allowed.includes(value) ? value : 'none';
+}
+
+function sanitizeReminderType(value) {
+  const allowed = ['none', 'at-time', 'morning'];
+  return allowed.includes(value) ? value : 'none';
+}
+
+function clampReminderMinutes(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 15;
+  return Math.min(60, Math.max(5, parsed));
+}
+
+function occursOnDate(event, date) {
+  if (!event?.date) return false;
+  if (date < event.date) return false;
+
+  if (event.recurrenceEnd && date > event.recurrenceEnd) return false;
+  if (event.recurrenceType === 'none') return event.date === date;
+
+  if (event.recurrenceType === 'daily') return true;
+
+  const startDate = new Date(`${event.date}T12:00:00`);
+  const targetDate = new Date(`${date}T12:00:00`);
+
+  if (event.recurrenceType === 'weekly') {
+    return startDate.getDay() === targetDate.getDay();
+  }
+
+  if (event.recurrenceType === 'monthly') {
+    return startDate.getDate() === targetDate.getDate();
+  }
+
+  return event.date === date;
+}
+
+function materializeEventOnDate(event, date) {
+  return {
+    ...event,
+    date,
+    baseDate: event.date
+  };
+}
+
+function getOccurrencesInRange(startDate, endDate, limit = Infinity, filterFn = () => true) {
+  const events = [];
+  let cursor = startDate;
+
+  while (cursor <= endDate) {
+    const dayEvents = eventsForDate(cursor).filter(filterFn);
+    events.push(...dayEvents);
+    if (events.length >= limit) break;
+    cursor = shiftIsoDate(cursor, 1);
+  }
+
+  return events.slice(0, limit);
+}
+
+function shiftIsoDate(isoDate, days) {
+  const date = new Date(`${isoDate}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function loadReminderLog() {
+  const raw = localStorage.getItem(reminderLogKey);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReminderLog() {
+  localStorage.setItem(reminderLogKey, JSON.stringify(state.reminderLog));
+}
+
+function notificationKey(event, occurrenceDate) {
+  return `${occurrenceDate}|${event.id}|${event.startTime || 'none'}|${event.reminderType}`;
+}
+
+function hasSentReminder(event, occurrenceDate) {
+  return Boolean(state.reminderLog[notificationKey(event, occurrenceDate)]);
+}
+
+function markReminderSent(event, occurrenceDate) {
+  state.reminderLog[notificationKey(event, occurrenceDate)] = Date.now();
+  saveReminderLog();
+}
+
+function pruneReminderLog() {
+  const cutoff = Date.now() - 1000 * 60 * 60 * 24 * 14;
+  Object.entries(state.reminderLog).forEach(([key, timestamp]) => {
+    if (Number(timestamp) < cutoff) delete state.reminderLog[key];
+  });
+  saveReminderLog();
+}
+
+function requestNotificationPermission() {
+  if (typeof Notification === 'undefined') {
+    window.alert('Notifications are not supported in this browser.');
+    return;
+  }
+
+  if (Notification.permission === 'granted') {
+    window.alert('Reminders are already enabled.');
+    return;
+  }
+
+  Notification.requestPermission().then(() => {
+    render();
+    checkRemindersNow();
+  });
+}
+
+function startReminderEngine() {
+  pruneReminderLog();
+  checkRemindersNow();
+  window.setInterval(checkRemindersNow, 30 * 1000);
+}
+
+function checkRemindersNow() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+  const occurrenceDate = todayISO();
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const todayEvents = eventsForDate(occurrenceDate);
+
+  todayEvents.forEach((event) => {
+    if (event.reminderType === 'none' || hasSentReminder(event, occurrenceDate)) return;
+
+    if (event.reminderType === 'at-time' && event.startTime) {
+      const trigger = Math.max(0, timeToMinutes(event.startTime) - event.reminderMinutesBefore);
+      if (nowMinutes >= trigger) {
+        sendEventNotification(event, occurrenceDate, `${event.reminderMinutesBefore}m reminder`);
+      }
+      return;
+    }
+
+    if (event.reminderType === 'morning' && nowMinutes >= 8 * 60) {
+      sendEventNotification(event, occurrenceDate, 'Morning reminder');
+    }
+  });
+}
+
+function sendEventNotification(event, occurrenceDate, subtitle) {
+  new Notification(`Planner: ${event.title}`, {
+    body: `${subtitle} • ${formatTimeRange(event.startTime, event.endTime)} • ${formatShortDate(occurrenceDate)}`,
+    tag: notificationKey(event, occurrenceDate)
+  });
+  markReminderSent(event, occurrenceDate);
 }

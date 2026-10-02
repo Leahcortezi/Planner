@@ -11,6 +11,8 @@ A mobile-first visual dashboard for:
 - Smart `Now / Next / Due Soon` focus cards
 - Natural-language quick capture
 - Installable PWA with offline support
+- Recurring events (daily/weekly/monthly)
+- Optional event reminders (timed or morning)
 
 Data is saved automatically in `localStorage`.
 
@@ -49,6 +51,15 @@ npm run preview
 - `assignment due friday 11pm`
 
 The app auto-detects category/date/time and creates the event.
+
+### Recurrence + reminders
+
+- In event form, set `Repeat` to daily/weekly/monthly and optionally add `Repeat until`.
+- Set `Reminder` to:
+	- `Before start time` (5–60 minutes before)
+	- `Morning reminder (8:00 AM)`
+- In `Inbox`, tap `Enable Alerts` to allow browser notifications.
+- Reminder notifications fire while the app is open on your device.
 
 ## PWA on iPhone
 
