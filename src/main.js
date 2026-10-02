@@ -95,7 +95,7 @@ const demoData = {
 
 const state = {
   selectedDate: todayISO(),
-  activeTab: 'schedule',
+  activeTab: 'today',
   modal: null,
   data: loadData()
 };
@@ -103,6 +103,7 @@ const state = {
 const app = document.querySelector('#app');
 
 render();
+registerServiceWorker();
 
 function render() {
   app.innerHTML = `
@@ -110,36 +111,22 @@ function render() {
       <header class="top">
         <div>
           <p class="caption">Planner</p>
-          <h1>${formatLongDate(state.selectedDate)}</h1>
+          <h1>${state.activeTab === 'calendar' ? monthTitle(state.selectedDate) : formatLongDate(state.selectedDate)}</h1>
         </div>
         <button class="pill" data-action="jump-today">Today</button>
       </header>
 
-      <section class="card day-overview">
-        <div class="section-head">
-          <h2>Your Day</h2>
-          <p>${countEventsForDate(state.selectedDate)} items</p>
-        </div>
-        <div class="event-list">${renderDayEvents(state.selectedDate)}</div>
-      </section>
-
-      <section class="card">
-        <div class="section-head">
-          <h2>Calendar</h2>
-          <p>${monthTitle(state.selectedDate)}</p>
-        </div>
-        ${renderCalendar(state.selectedDate)}
-      </section>
-
-      <nav class="tabs">
-        <button class="tab ${state.activeTab === 'schedule' ? 'active' : ''}" data-tab="schedule">Schedule</button>
-        <button class="tab ${state.activeTab === 'trackers' ? 'active' : ''}" data-tab="trackers">Trackers</button>
-        <button class="tab ${state.activeTab === 'money' ? 'active' : ''}" data-tab="money">Money</button>
-      </nav>
-
       <section class="content">
         ${renderActiveTab()}
       </section>
+
+      <nav class="bottom-nav">
+        <button class="tab ${state.activeTab === 'today' ? 'active' : ''}" data-tab="today">🏠 Today</button>
+        <button class="tab ${state.activeTab === 'calendar' ? 'active' : ''}" data-tab="calendar">📆 Calendar</button>
+        <button class="tab ${state.activeTab === 'trackers' ? 'active' : ''}" data-tab="trackers">🌸 Trackers</button>
+        <button class="tab ${state.activeTab === 'money' ? 'active' : ''}" data-tab="money">💳 Money</button>
+        <button class="tab ${state.activeTab === 'inbox' ? 'active' : ''}" data-tab="inbox">✨ Inbox</button>
+      </nav>
 
       <button class="fab" data-action="quick-add">＋</button>
     </main>
@@ -151,20 +138,86 @@ function render() {
 }
 
 function renderActiveTab() {
+  if (state.activeTab === 'today') return renderTodayTab();
+  if (state.activeTab === 'calendar') return renderCalendarTab();
   if (state.activeTab === 'trackers') return renderTrackers();
   if (state.activeTab === 'money') return renderMoney();
-  return renderScheduleTab();
+  if (state.activeTab === 'inbox') return renderInbox();
+  return renderTodayTab();
 }
 
-function renderScheduleTab() {
+function renderTodayTab() {
   const selected = eventsForDate(state.selectedDate);
   return `
-    <div class="card soft">
-      <div class="section-head">
-        <h3>${formatShortDate(state.selectedDate)}</h3>
-        <button class="ghost" data-action="new-event">Add Event</button>
+    <div class="stack">
+      <div class="card day-overview">
+        <div class="section-head">
+          <h2>Your Day</h2>
+          <p>${countEventsForDate(state.selectedDate)} items</p>
+        </div>
+        <div class="smart-grid">
+          ${renderTodayHighlights()}
+        </div>
       </div>
-      <div class="event-list">${renderEventRows(selected, true)}</div>
+      <div class="card soft">
+        <div class="section-head">
+          <h3>${formatShortDate(state.selectedDate)} Agenda</h3>
+          <button class="ghost" data-action="new-event">Add Event</button>
+        </div>
+        <div class="event-list">${renderEventRows(selected, true)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCalendarTab() {
+  const selected = eventsForDate(state.selectedDate);
+  return `
+    <div class="stack">
+      <section class="card">
+        <div class="section-head">
+          <h2>Calendar</h2>
+          <p>${monthTitle(state.selectedDate)}</p>
+        </div>
+        ${renderCalendar(state.selectedDate)}
+      </section>
+      <div class="card soft">
+        <div class="section-head">
+          <h3>${formatShortDate(state.selectedDate)}</h3>
+          <button class="ghost" data-action="new-event">Add</button>
+        </div>
+        <div class="event-list">${renderEventRows(selected, true)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderInbox() {
+  const upcoming = state.data.events
+    .filter((event) => event.date >= todayISO())
+    .sort(sortByDateTime)
+    .slice(0, 5);
+
+  return `
+    <div class="stack">
+      <div class="card soft">
+        <div class="section-head">
+          <h3>Quick Capture</h3>
+          <p>Smart add</p>
+        </div>
+        <form class="capture-form" data-form="quick-capture">
+          <input name="entry" placeholder="Work shift Tue 4-9pm" required />
+          <button class="pill" type="submit">Add</button>
+        </form>
+        <p class="muted">Try: "Yoga tomorrow 7am" or "Dentist Oct 15 3pm"</p>
+      </div>
+      <div class="card soft">
+        <div class="section-head">
+          <h3>Upcoming</h3>
+          <button class="ghost" data-action="new-event">Manual Add</button>
+        </div>
+        <div class="event-list">${renderEventRows(upcoming, true)}</div>
+      </div>
     </div>
   `;
 }
@@ -342,6 +395,30 @@ function renderCalendar(selectedDate) {
   `;
 }
 
+function renderTodayHighlights() {
+  const nowItem = findNowEvent(state.selectedDate);
+  const nextItem = findNextEvent(state.selectedDate);
+  const dueSoon = findDueSoonEvent();
+
+  return `
+    <article class="smart-card now">
+      <p class="smart-label">Now</p>
+      <h4>${nowItem ? escapeHtml(nowItem.title) : 'Nothing right now'}</h4>
+      <p>${nowItem ? formatTimeRange(nowItem.startTime, nowItem.endTime) : 'Take a breather ✨'}</p>
+    </article>
+    <article class="smart-card next">
+      <p class="smart-label">Next</p>
+      <h4>${nextItem ? escapeHtml(nextItem.title) : 'No more events today'}</h4>
+      <p>${nextItem ? formatTimeRange(nextItem.startTime, nextItem.endTime) : 'You are caught up'}</p>
+    </article>
+    <article class="smart-card soon">
+      <p class="smart-label">Due Soon</p>
+      <h4>${dueSoon ? escapeHtml(dueSoon.title) : 'No urgent deadlines'}</h4>
+      <p>${dueSoon ? `${formatShortDate(dueSoon.date)} • ${daysUntil(dueSoon.date)}d left` : 'Everything looks clear'}</p>
+    </article>
+  `;
+}
+
 function renderModal() {
   if (!state.modal) return '';
 
@@ -350,6 +427,11 @@ function renderModal() {
       <div class="modal-backdrop" data-action="close-modal">
         <div class="modal" data-stop>
           <h3>Quick Add</h3>
+          <form class="capture-form" data-form="quick-capture">
+            <input name="entry" placeholder="Class mon 9:30am" required />
+            <button class="pill" type="submit">Add</button>
+          </form>
+          <p class="muted">Smart examples: "work shift tue 4-9", "period care tomorrow"</p>
           <div class="quick-grid">
             <button data-action="quick-preset" data-preset="class">Class</button>
             <button data-action="quick-preset" data-preset="shift">Shift</button>
@@ -492,6 +574,7 @@ function bindEvents() {
       if (kind === 'event') saveEvent(values);
       if (kind === 'tracker') saveTracker(values);
       if (kind === 'account') saveAccount(values);
+      if (kind === 'quick-capture') saveQuickCapture(values);
     });
   });
 }
@@ -499,6 +582,7 @@ function bindEvents() {
 function handleAction(action, element) {
   if (action === 'jump-today') {
     state.selectedDate = todayISO();
+    state.activeTab = 'today';
     render();
     return;
   }
@@ -637,6 +721,30 @@ function saveEvent(values) {
 
   persist();
   state.modal = null;
+  render();
+}
+
+function saveQuickCapture(values) {
+  const input = String(values.entry || '').trim();
+  if (!input) return;
+
+  const parsed = parseNaturalEventInput(input);
+  const payload = {
+    id: idGenerator(),
+    title: parsed.title,
+    category: parsed.category,
+    date: parsed.date,
+    startTime: parsed.startTime,
+    endTime: parsed.endTime,
+    notes: parsed.notes,
+    accountId: ''
+  };
+
+  state.data.events.push(payload);
+  state.selectedDate = payload.date;
+  state.modal = null;
+  state.activeTab = 'today';
+  persist();
   render();
 }
 
@@ -790,4 +898,161 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function parseNaturalEventInput(input) {
+  const lowered = input.toLowerCase();
+  const date = parseDateFromText(lowered) || state.selectedDate;
+  const { startTime, endTime } = parseTimeRangeFromText(lowered);
+  const category = inferCategoryFromText(lowered);
+  const title = toTitleCase(cleanTitleFromInput(input));
+
+  return {
+    title: title || 'New item',
+    category,
+    date,
+    startTime,
+    endTime,
+    notes: `Added from quick capture: ${input}`
+  };
+}
+
+function parseDateFromText(text) {
+  const now = new Date();
+  const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+  if (text.includes('today')) return todayISO();
+  if (text.includes('tomorrow')) return isoDateOffset(1);
+
+  const weekdayMatch = text.match(/\b(sun|mon|tue|wed|thu|fri|sat)(day)?\b/);
+  if (weekdayMatch) {
+    const target = weekdays.indexOf(weekdayMatch[1].slice(0, 3));
+    const base = new Date(`${todayISO()}T12:00:00`);
+    const current = base.getDay();
+    let diff = (target - current + 7) % 7;
+    if (diff === 0) diff = 7;
+    base.setDate(base.getDate() + diff);
+    return base.toISOString().slice(0, 10);
+  }
+
+  const explicit = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (explicit) {
+    const year = Number(explicit[1]);
+    const month = String(Number(explicit[2])).padStart(2, '0');
+    const day = String(Number(explicit[3])).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  const shortDate = text.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+  if (shortDate) {
+    const month = String(Number(shortDate[1])).padStart(2, '0');
+    const day = String(Number(shortDate[2])).padStart(2, '0');
+    return `${now.getFullYear()}-${month}-${day}`;
+  }
+
+  return null;
+}
+
+function parseTimeRangeFromText(text) {
+  const range = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/);
+  if (range) {
+    const startTime = to24Hour(range[1], range[2], range[3]);
+    const endTime = to24Hour(range[4], range[5], range[6] || range[3]);
+    return { startTime, endTime };
+  }
+
+  const single = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+  if (single) {
+    return { startTime: to24Hour(single[1], single[2], single[3]), endTime: '' };
+  }
+
+  return { startTime: '', endTime: '' };
+}
+
+function to24Hour(hourRaw, minuteRaw, meridiemRaw) {
+  let hour = Number(hourRaw);
+  const minute = Number(minuteRaw || 0);
+  const meridiem = String(meridiemRaw || '').toLowerCase();
+
+  if (meridiem === 'pm' && hour < 12) hour += 12;
+  if (meridiem === 'am' && hour === 12) hour = 0;
+
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function inferCategoryFromText(text) {
+  if (/\bclass|lecture|lab|study\b/.test(text)) return 'class';
+  if (/\bshift|work|job|clock\b/.test(text)) return 'shift';
+  if (/\bdeadline|due|submit|assignment|exam\b/.test(text)) return 'deadline_school';
+  if (/\bmeeting|client|project\b/.test(text)) return 'deadline_work';
+  if (/\bmoney|bank|pay|bill|rent|budget\b/.test(text)) return 'money';
+  if (/\bdoctor|dentist|appointment|salon|beauty|nails\b/.test(text)) return 'appointment';
+  return 'plan';
+}
+
+function cleanTitleFromInput(input) {
+  return input
+    .replace(/\b(today|tomorrow|sun(day)?|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?)\b/gi, ' ')
+    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)?\s*[-to]*\s*\d{0,2}(:\d{2})?\s*(am|pm)?\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toTitleCase(text) {
+  return String(text)
+    .toLowerCase()
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function findNowEvent(date) {
+  const todayEvents = eventsForDate(date);
+  const now = new Date();
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+
+  return todayEvents.find((event) => {
+    if (!event.startTime || !event.endTime) return false;
+    const start = timeToMinutes(event.startTime);
+    const end = timeToMinutes(event.endTime);
+    return minutesNow >= start && minutesNow <= end;
+  });
+}
+
+function findNextEvent(date) {
+  const todayEvents = eventsForDate(date);
+  const now = new Date();
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+
+  return todayEvents.find((event) => {
+    if (!event.startTime) return false;
+    return timeToMinutes(event.startTime) > minutesNow;
+  });
+}
+
+function findDueSoonEvent() {
+  const limit = isoDateOffset(7);
+  return state.data.events
+    .filter((event) => (event.category === 'deadline_school' || event.category === 'deadline_work') && event.date >= todayISO() && event.date <= limit)
+    .sort(sortByDateTime)[0];
+}
+
+function daysUntil(isoDate) {
+  const target = new Date(`${isoDate}T12:00:00`).getTime();
+  const current = new Date(`${todayISO()}T12:00:00`).getTime();
+  const raw = Math.floor((target - current) / (24 * 60 * 60 * 1000));
+  return Math.max(0, raw);
+}
+
+function timeToMinutes(time) {
+  const [hours, minutes] = String(time).split(':');
+  return Number(hours) * 60 + Number(minutes || 0);
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js');
+  });
 }

@@ -8,6 +8,9 @@ A mobile-first visual dashboard for:
 - Chores + self-care countdown trackers
 - Multiple checking accounts + money items
 - Calendar-centric daily view
+- Smart `Now / Next / Due Soon` focus cards
+- Natural-language quick capture
+- Installable PWA with offline support
 
 Data is saved automatically in `localStorage`.
 
@@ -31,13 +34,27 @@ npm run preview
 
 ## How to use
 
-- Tap `＋` for quick add presets (class, shift, appointment, plan, deadlines, money item, tracker).
-- Use calendar cells to switch day context.
-- Use tabs:
-  - `Schedule`: day event list with edit/delete.
-  - `Trackers`: chores/self-care countdowns, weekly/monthly check-off, mark-done.
-  - `Money`: checking account cards and money-related upcoming items.
-- `Today` jumps back to current date.
+- Use bottom nav: `Today`, `Calendar`, `Trackers`, `Money`, `Inbox`.
+- `Today` tab surfaces smart cards (`Now`, `Next`, `Due Soon`) plus your daily agenda.
+- `Calendar` tab gives month view and day list with quick add/edit/delete.
+- `Trackers` tab handles chores/self-care countdowns and weekly/monthly check-off.
+- `Money` tab manages multiple checking accounts and money-related events.
+- `Inbox` tab has natural-language quick capture.
+
+### Quick capture examples
+
+- `work shift tue 4-9pm`
+- `yoga tomorrow 7am`
+- `dentist 10/15 3pm`
+- `assignment due friday 11pm`
+
+The app auto-detects category/date/time and creates the event.
+
+## PWA on iPhone
+
+- Open the app URL in Safari.
+- Tap Share → `Add to Home Screen`.
+- Launch from home screen for app-like experience and offline caching.
 
 ## Notes
 
